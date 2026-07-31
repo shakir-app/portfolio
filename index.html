@@ -51,7 +51,7 @@
   <!-- Website View Mode Container -->
   <div id="websiteViewerContainer" class="hidden min-h-screen w-full bg-slate-900/95 backdrop-blur-md flex flex-col items-center justify-start">
     
-    <!-- Header Navigation Bar (จะแสดงเมื่อใน PDF มีลิงก์จริงเท่านั้น) -->
+    <!-- Header Navigation Bar -->
     <div id="viewerHeaderBar" class="hidden w-full bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-50">
       <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
         
@@ -83,7 +83,7 @@
     <!-- Loading Screen -->
     <div id="loadingView" class="flex flex-col items-center justify-center my-20 text-white">
       <div class="w-12 h-12 rounded-full border-4 border-pink-400 border-t-transparent animate-spin mb-4"></div>
-      <p class="text-slate-300 font-heading font-medium text-sm">กำลังตรวจหาลิงก์และสร้างเมนูจากไฟล์...</p>
+      <p class="text-slate-300 font-heading font-medium text-sm">กำลังสแกนลิงก์และรวมปุ่มเมนูจากไฟล์ PDF...</p>
     </div>
 
     <!-- Canvas Container สำหรับวางหน้า PDF -->
@@ -216,13 +216,23 @@
       }
     }
 
-    // ดึง Text จากตำแหน่งพิกัดของ Link บนหน้า PDF (รองรับทุกภาษา/Unicode)
+    // ฟังก์ชันช่วยสมานคำภาษาไทยที่ถูกเว้นวรรคกระจายออกใน PDF
+    function fixThaiSpacing(str) {
+      if (!str) return '';
+      let cleaned = str.trim();
+      // ลบช่องว่างระหว่างอักขระภาษาไทย (เช่น "คำ นำ" -> "คำนำ", "ประ วั ติ" -> "ประวัติ")
+      for (let i = 0; i < 3; i++) {
+        cleaned = cleaned.replace(/([ก-๙])\s+(?=[ก-๙])/g, '$1');
+      }
+      return cleaned.replace(/\s+/g, ' ');
+    }
+
+    // ดึง Text จากตำแหน่งลิงก์บน PDF
     async function getLinkTextInRect(page, rect) {
       try {
         if (!rect || rect.length < 4) return '';
         const textContent = await page.getTextContent();
         
-        // ขอบเขตพิกัด x, y ใน PDF
         const minX = Math.min(rect[0], rect[2]) - 5;
         const maxX = Math.max(rect[0], rect[2]) + 150;
         const minY = Math.min(rect[1], rect[3]) - 8;
@@ -237,29 +247,28 @@
 
         if (matchedItems.length === 0) return '';
 
-        // เรียงลำดับจากบนลงล่าง และจากซ้ายไปขวา
         matchedItems.sort((a, b) => {
           const yDiff = b.transform[5] - a.transform[5];
           if (Math.abs(yDiff) > 5) return yDiff;
           return a.transform[4] - b.transform[4];
         });
 
-        return matchedItems.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+        const rawText = matchedItems.map(i => i.str).join(' ');
+        return fixThaiSpacing(rawText);
       } catch (e) {
         return '';
       }
     }
 
-    // สแกนดึงเฉพาะ "ลิงก์ที่มีอยู่จริง" ในไฟล์ PDF เท่านั้น (ไม่มีการสร้างปุ่มเดาสุ่มตามเลขหน้า)
+    // สแกนเฉพาะจุดที่มีลิงก์จริง + ยุบรวมหน้าเป้าหมายเดียวกันให้เหลือ 1 ปุ่ม
     async function extractLinksFromPdf(pdf) {
-      const extractedLinks = [];
-      const seenKeys = new Set();
+      const targetMap = new Map(); // เก็บเป้าหมายที่ไม่ซ้ำกัน (Key = Target Page)
 
-      // 1. ดึงจาก PDF Bookmarks / Outline (ถ้าไฟล์สร้างหัวข้อสารบัญไว้)
+      // 1. อ่านจาก Bookmarks / Outline ก่อน (ถ้าไฟล์ทำสารบัญหลักไว้)
       try {
         const outline = await pdf.getOutline();
         if (outline && outline.length > 0) {
-          async function traverseOutline(items) {
+          async function processOutline(items) {
             for (const item of items) {
               let targetPage = null;
               if (typeof item.dest === 'string') {
@@ -270,29 +279,28 @@
               }
 
               if (targetPage && item.title && item.title.trim()) {
-                const key = `internal_${targetPage}_${item.title.trim()}`;
-                if (!seenKeys.has(key)) {
-                  seenKeys.add(key);
-                  extractedLinks.push({
-                    title: item.title.trim(),
+                const key = `internal_${targetPage}`;
+                if (!targetMap.has(key)) {
+                  targetMap.set(key, {
+                    title: fixThaiSpacing(item.title),
                     target: targetPage,
                     type: 'internal',
                     icon: 'fa-bookmark',
-                    pageNum: targetPage
+                    priority: 2
                   });
                 }
               }
 
               if (item.items && item.items.length > 0) {
-                await traverseOutline(item.items);
+                await processOutline(item.items);
               }
             }
           }
-          await traverseOutline(outline);
+          await processOutline(outline);
         }
       } catch(e) {}
 
-      // 2. สแกนหา Link Annotations เฉพาะจุดที่มีการแปะ Hyperlink ในไฟล์จริง
+      // 2. สแกน Link Annotations บนหน้า PDF
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
@@ -301,28 +309,24 @@
           for (const annot of annotations) {
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               
-              // 2.1 ลิงก์ภายนอก (URL / Email)
+              // 2.1 ลิงก์ไปภายนอก (URL)
               if (annot.url) {
-                let linkText = await getLinkTextInRect(page, annot.rect);
-                let title = linkText || annot.url;
-                let icon = 'fa-arrow-up-right-from-square';
+                const key = `external_${annot.url}`;
+                if (!targetMap.has(key)) {
+                  let cleanText = await getLinkTextInRect(page, annot.rect);
+                  let title = cleanText || annot.url;
+                  let icon = 'fa-arrow-up-right-from-square';
 
-                if (annot.url.startsWith('mailto:')) {
-                  icon = 'fa-envelope';
-                  if (!linkText) title = annot.url.replace('mailto:', '');
-                } else if (annot.url.startsWith('http://') || annot.url.startsWith('https://')) {
-                  if (!linkText) {
+                  if (annot.url.startsWith('mailto:')) {
+                    icon = 'fa-envelope';
+                    if (!cleanText) title = annot.url.replace('mailto:', '');
+                  } else if (!cleanText) {
                     try {
-                      const parsed = new URL(annot.url);
-                      title = parsed.hostname.replace('www.', '');
+                      title = new URL(annot.url).hostname.replace('www.', '');
                     } catch(e) { title = annot.url; }
                   }
-                }
 
-                const key = `external_${annot.url}_${title}`;
-                if (!seenKeys.has(key)) {
-                  seenKeys.add(key);
-                  extractedLinks.push({
+                  targetMap.set(key, {
                     title: title,
                     target: annot.url,
                     type: 'external',
@@ -331,7 +335,7 @@
                   });
                 }
               } 
-              // 2.2 ลิงก์ภายในไฟล์ (Internal Destination Page)
+              // 2.2 ลิงก์ภายในไฟล์ (Internal Destinations)
               else if (annot.dest) {
                 let targetPage = null;
                 if (typeof annot.dest === 'string') {
@@ -346,21 +350,24 @@
                 }
 
                 if (targetPage) {
-                  // ดึงข้อความจากจุดลิงก์จริง
-                  let linkText = await getLinkTextInRect(page, annot.rect);
-                  
-                  // นำมาสร้างปุ่มเฉพาะเมื่อพบข้อความที่จุดลิงก์จริงเท่านั้น
-                  if (linkText && linkText.trim().length > 0) {
-                    const key = `internal_${targetPage}_${linkText.trim()}`;
-                    if (!seenKeys.has(key)) {
-                      seenKeys.add(key);
-                      extractedLinks.push({
-                        title: linkText.trim(),
-                        target: targetPage,
-                        type: 'internal',
-                        icon: 'fa-link',
-                        pageNum: targetPage
-                      });
+                  const key = `internal_${targetPage}`;
+                  let cleanText = await getLinkTextInRect(page, annot.rect);
+
+                  const existing = targetMap.get(key);
+
+                  if (!existing) {
+                    // ถ้ายังไม่มีเป้าหมายหน้านี้ในระบบ ให้สร้างปุ่มขึ้นมา
+                    targetMap.set(key, {
+                      title: cleanText && cleanText.length > 0 ? cleanText : `หน้า ${targetPage}`,
+                      target: targetPage,
+                      type: 'internal',
+                      icon: 'fa-bookmark',
+                      priority: 1
+                    });
+                  } else if (existing.priority === 1) {
+                    // ถ้ามีเป้าหมายหน้านี้อยู่แล้ว เลือกเอาข้อความที่สมบูรณ์และยาวที่สุดมาเป็นชื่อปุ่ม
+                    if (cleanText && cleanText.length > existing.title.length && !existing.title.startsWith('หน้า ')) {
+                      existing.title = cleanText;
                     }
                   }
                 }
@@ -370,7 +377,10 @@
         } catch(e) {}
       }
 
-      // จัดเรียงลำดับปุ่มเมนูตามลำดับเลขหน้าเป้าหมาย (1, 2, 3...) จากน้อยไปมาก
+      // แปลงข้อมูลจาก Map ออกมาเป็น Array
+      const extractedLinks = Array.from(targetMap.values());
+
+      // จัดเรียงลำดับตามเลขหน้าเป้าหมายจากน้อยไปมาก (1, 2, 3...)
       extractedLinks.sort((a, b) => {
         if (a.type === 'internal' && b.type === 'internal') {
           return a.target - b.target;
@@ -388,7 +398,6 @@
       const desktopNav = document.getElementById('desktopMenuNav');
       const mobileNav = document.getElementById('mobileMenuNav');
 
-      // หากในไฟล์ PDF ไม่มีลิงก์เชื่อมโยงอยู่เลย ให้ซ่อนแถบเมนู
       if (!links || links.length === 0) {
         headerBar.classList.add('hidden');
         return;
@@ -456,7 +465,6 @@
 
           const pdf = await pdfjsLib.getDocument({ data: pdfArray }).promise;
           
-          // สแกนเฉพาะจุดที่มีลิงก์เชื่อมโยงจริงเท่านั้น
           const extractedLinks = await extractLinksFromPdf(pdf);
           buildPdfLinksNavbar(extractedLinks);
 
