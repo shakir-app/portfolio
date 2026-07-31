@@ -282,7 +282,7 @@
           for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
             const page = await pdf.getPage(pageNum);
             
-            const viewport = page.getViewport({ scale: 2 }); // ความคมชัดสูง (High DPI)
+            const viewport = page.getViewport({ scale: 2 });
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             
@@ -414,7 +414,7 @@
               action: 'deleteFile',
               fileId: fileId,
               username: adminAuth.username,
-              password: password: adminAuth.password
+              password: adminAuth.password
             })
           });
 
