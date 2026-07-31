@@ -172,10 +172,8 @@
   <script>
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwg0vi1g8Ke6CvRjd2CoAOoIeCUsgr_h8w4dlMeMexi7ZqrP2wJMDq9VAJeK1_hOpFo/exec";
 
-    // กำหนด Worker URL ของ PDF.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // ตั้งค่า URL CMap และ Standard Font เพื่อรองรับ UTF-8 ภาษาไทย และทุกภาษาทั่วโลก
     const PDF_CMAP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/';
     const PDF_STANDARD_FONT_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/';
 
@@ -221,7 +219,12 @@
       }
     }
 
-    // ฟังก์ชันช่วยรวมสระ/พยัญชนะไทย และปรับโครงสร้าง Unicode (UTF-8 Normalization)
+    // --- ระบบแยกและคัดกรองภาษาไทย / ประโยคบรรทัด ---
+
+    function containsThai(str) {
+      return /[\u0E00-\u0E7F]/.test(str);
+    }
+
     function fixThaiSpacing(str) {
       if (!str) return '';
       let cleaned = str.trim();
@@ -231,10 +234,42 @@
       return cleaned.replace(/\s+/g, ' ');
     }
 
-    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect พร้อมระบบจัดการ UTF-8
-    async function getLinkTextInRect(page, rect) {
+    // ฟังก์ชันแยกประโยคออกจากกัน และทำความสะอาดภาษาไทย
+    function filterAndCleanThaiTitles(rawText) {
+      if (!rawText) return [];
+
+      // แยกประโยคด้วยอักขระคั่น เช่น ขึ้นบรรทัดใหม่ (\n), ไปป์ (|), สแลช (/), จุดไข่ปลา (•), อัฒภาค (;)
+      const rawParts = rawText.split(/[\n\r|•\/;]+/);
+      const cleanedTitles = [];
+
+      for (let part of rawParts) {
+        let text = part.normalize('NFC').trim();
+
+        // ตัดตัวเลขหัวข้อ/สัญลักษณ์ข้างหน้า เช่น "01 คำนำ", "1.1 ประวัติ", "1) ผลงาน"
+        text = text.replace(/^[\d\s.\-•\)\(]+/, '').trim();
+
+        if (containsThai(text)) {
+          const thaiMatches = text.match(/[\u0E00-\u0E7F0-9\s]+/g);
+          if (thaiMatches) {
+            text = thaiMatches.join('');
+          }
+          text = fixThaiSpacing(text);
+        }
+
+        text = text.trim();
+        // กรองประโยคที่มีความยาวตั้งแต่ 2 ตัวอักษรขึ้นไป
+        if (text.length >= 2) {
+          cleanedTitles.push(text);
+        }
+      }
+
+      return cleanedTitles;
+    }
+
+    // ดึง Text จาก PDF โดยสแกนระยะห่างแนวตั้ง (Y-axis) เพื่อแยกบรรทัดข้อความออกจากกัน
+    async function getLinkTitlesInRect(page, rect) {
       try {
-        if (!rect || rect.length < 4) return '';
+        if (!rect || rect.length < 4) return [];
         const textContent = await page.getTextContent();
         
         const lX1 = Math.min(rect[0], rect[2]) - 5;
@@ -249,33 +284,49 @@
           return x >= lX1 && x <= lX2 && y >= lY1 && y <= lY2;
         });
 
-        if (matchedItems.length === 0) return '';
+        if (matchedItems.length === 0) return [];
 
+        // เรียงลำดับจากบนลงล่าง (Y สูงไปต่ำ) และซ้ายไปขวา (X น้อยไปมาก)
         matchedItems.sort((a, b) => {
           const yDiff = b.transform[5] - a.transform[5];
-          if (Math.abs(yDiff) > 3) return yDiff;
+          if (Math.abs(yDiff) > 4) return yDiff; 
           return a.transform[4] - b.transform[4];
         });
 
-        const rawText = matchedItems.map(i => i.str).join(' ');
-        let cleaned = fixThaiSpacing(rawText);
-        
-        // แปลงรูปแบบอักขระ Unicode ให้อยู่ในมาตรฐาน NFC (สำหรับสระลอย/จม ภาษาไทย)
-        cleaned = cleaned.normalize('NFC');
+        // จัดกลุ่มข้อความตามบรรทัดจริง (ถ้าระยะ Y ต่างกันเกิน 6px ให้ถือว่าคนละบรรทัด)
+        const lines = [];
+        let currentLine = [];
+        let lastY = null;
 
-        // ตัดตัวเลขหัวข้อข้างหน้าออก เช่น "01 คำนำ" -> เหลือ "คำนำ"
-        const cleanWithoutNum = cleaned.replace(/^[\d\s.\-•]+/, '').trim();
-        if (cleanWithoutNum.length > 0) {
-          cleaned = cleanWithoutNum;
+        for (const item of matchedItems) {
+          const currentY = item.transform[5];
+          if (lastY !== null && Math.abs(lastY - currentY) > 6) {
+            if (currentLine.length > 0) {
+              lines.push(currentLine.map(i => i.str).join(' '));
+              currentLine = [];
+            }
+          }
+          currentLine.push(item);
+          lastY = currentY;
+        }
+        if (currentLine.length > 0) {
+          lines.push(currentLine.map(i => i.str).join(' '));
         }
 
-        return cleaned;
+        // นำข้อความแต่ละบรรทัดเข้ากระบวนการแยกประโยค
+        const allTitles = [];
+        for (const lineText of lines) {
+          const titles = filterAndCleanThaiTitles(lineText);
+          allTitles.push(...titles);
+        }
+
+        return allTitles;
       } catch (e) {
-        return '';
+        return [];
       }
     }
 
-    // ฟังก์ชันสแกนเฉพาะลิงก์จริง และดึงชื่อภาษาต่างๆ อย่างถูกต้อง
+    // สแกนและดึงลิงก์ โดยสร้างเมนูแยกตามประโยคที่แยกได้จริง
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
@@ -290,32 +341,35 @@
               if (annot.url) {
                 // External Link
                 const url = annot.url.trim();
-                const key = `ext_${url}`;
-
-                if (!targetMap.has(key)) {
-                  let cleanText = await getLinkTextInRect(page, annot.rect);
-                  let title = cleanText;
-                  let icon = 'fa-arrow-up-right-from-square';
-
+                let titles = await getLinkTitlesInRect(page, annot.rect);
+                
+                if (titles.length === 0) {
+                  let defaultTitle = url;
                   if (url.startsWith('mailto:')) {
-                    icon = 'fa-envelope';
-                    if (!title) title = url.replace('mailto:', '');
-                  } else if (!title) {
+                    defaultTitle = url.replace('mailto:', '');
+                  } else {
                     try {
                       const parsed = new URL(url);
-                      title = parsed.hostname.replace('www.', '');
-                    } catch(e) { 
-                      title = url; 
-                    }
+                      defaultTitle = parsed.hostname.replace('www.', '');
+                    } catch(e) {}
                   }
+                  titles = [defaultTitle];
+                }
 
-                  targetMap.set(key, {
-                    title: title,
-                    target: url,
-                    type: 'external',
-                    icon: icon,
-                    pageNum: pageNum
-                  });
+                let icon = url.startsWith('mailto:') ? 'fa-envelope' : 'fa-arrow-up-right-from-square';
+
+                for (const title of titles) {
+                  // Key ผูกกับ URL + ชื่อประโยค เพื่อป้องกันการรวมปุ่ม
+                  const key = `ext_${url}_${title}`;
+                  if (!targetMap.has(key)) {
+                    targetMap.set(key, {
+                      title: title,
+                      target: url,
+                      type: 'external',
+                      icon: icon,
+                      pageNum: pageNum
+                    });
+                  }
                 }
               } else if (annot.dest) {
                 // Internal Link
@@ -332,20 +386,21 @@
                 }
 
                 if (targetPage) {
-                  const key = `int_${targetPage}`;
-                  let cleanText = await getLinkTextInRect(page, annot.rect);
+                  let titles = await getLinkTitlesInRect(page, annot.rect);
+                  if (titles.length === 0) {
+                    titles = [`หน้า ${targetPage}`];
+                  }
 
-                  if (!targetMap.has(key)) {
-                    targetMap.set(key, {
-                      title: (cleanText && cleanText.length > 0) ? cleanText : `หน้า ${targetPage}`,
-                      target: targetPage,
-                      type: 'internal',
-                      icon: 'fa-bookmark'
-                    });
-                  } else {
-                    const existing = targetMap.get(key);
-                    if (existing.title.startsWith('หน้า ') && cleanText) {
-                      existing.title = cleanText;
+                  for (const title of titles) {
+                    // Key ผูกกับ เลขหน้า + ชื่อประโยค แยกเมนูชัดเจน
+                    const key = `int_${targetPage}_${title}`;
+                    if (!targetMap.has(key)) {
+                      targetMap.set(key, {
+                        title: title,
+                        target: targetPage,
+                        type: 'internal',
+                        icon: 'fa-bookmark'
+                      });
                     }
                   }
                 }
@@ -441,7 +496,6 @@
             pdfArray[i] = pdfData.charCodeAt(i);
           }
 
-          // โหลดไฟล์ PDF พร้อมระบุ cMapUrl และ standardFontDataUrl สำหรับ UTF-8
           const pdf = await pdfjsLib.getDocument({
             data: pdfArray,
             cMapUrl: PDF_CMAP_URL,
