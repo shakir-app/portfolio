@@ -226,7 +226,7 @@
       return cleaned.replace(/\s+/g, ' ');
     }
 
-    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect ของลิงก์
+    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect ของปุ่มลิงก์
     async function getLinkTextInRect(page, rect) {
       try {
         if (!rect || rect.length < 4) return '';
@@ -259,81 +259,52 @@
       }
     }
 
-    // ฟังก์ชันสแกนหาลิงก์พร้อมดึงชื่อจริง และจัดเรียงลำดับ $1 \to 2 \to 3 \dots$
+    // ฟังก์ชันสแกนเฉพาะพื้นที่ที่เป็นลิงก์กดได้จริง (Clickable Link Annotations) เท่านั้น
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
-      // 1. อ่าน Outline / Bookmarks ของไฟล์ก่อน (ถ้ามี)
-      try {
-        const outline = await pdf.getOutline();
-        if (outline && outline.length > 0) {
-          async function processOutline(items) {
-            for (const item of items) {
-              let targetPage = null;
-              if (typeof item.dest === 'string') {
-                const destArray = await pdf.getDestination(item.dest);
-                if (destArray) targetPage = (await pdf.getPageIndex(destArray[0])) + 1;
-              } else if (Array.isArray(item.dest)) {
-                targetPage = (await pdf.getPageIndex(item.dest[0])) + 1;
-              }
-
-              if (targetPage && item.title && item.title.trim()) {
-                const key = `internal_${targetPage}`;
-                targetMap.set(key, {
-                  title: fixThaiSpacing(item.title),
-                  target: targetPage,
-                  type: 'internal',
-                  icon: 'fa-bookmark',
-                  priority: 2
-                });
-              }
-
-              if (item.items && item.items.length > 0) {
-                await processOutline(item.items);
-              }
-            }
-          }
-          await processOutline(outline);
-        }
-      } catch(e) {}
-
-      // 2. สแกน Link Annotations ทุกๆ หน้า
+      // สแกนเฉพาะ Link Annotations บนทุกๆ หน้า (ไม่ใช้ Outline/Bookmark แล้ว)
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
           const annotations = await page.getAnnotations();
 
           for (const annot of annotations) {
+            // ต้องเป็น Link Annotation ที่ผู้ใช้ฝังปุ่มกดลงในหน้า PDF จริงๆ
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               
               if (annot.url) {
-                // External Link
-                const key = `external_${annot.url}`;
+                // ลิงก์ภายนอก (External Link)
+                const url = annot.url.trim();
+                const key = `ext_${url}`;
+
                 if (!targetMap.has(key)) {
                   let cleanText = await getLinkTextInRect(page, annot.rect);
                   let title = cleanText;
                   let icon = 'fa-arrow-up-right-from-square';
 
-                  if (annot.url.startsWith('mailto:')) {
+                  if (url.startsWith('mailto:')) {
                     icon = 'fa-envelope';
-                    if (!title) title = annot.url.replace('mailto:', '');
+                    if (!title) title = url.replace('mailto:', '');
                   } else if (!title) {
                     try {
-                      const parsed = new URL(annot.url);
+                      const parsed = new URL(url);
                       title = parsed.hostname.replace('www.', '');
-                    } catch(e) { title = annot.url; }
+                    } catch(e) { 
+                      title = url; 
+                    }
                   }
 
                   targetMap.set(key, {
                     title: title,
-                    target: annot.url,
+                    target: url,
                     type: 'external',
                     icon: icon,
                     pageNum: pageNum
                   });
                 }
               } else if (annot.dest) {
-                // Internal Link
+                // ลิงก์ภายในหน้า (Internal Page Link)
                 let targetPage = null;
                 if (typeof annot.dest === 'string') {
                   try {
@@ -347,20 +318,18 @@
                 }
 
                 if (targetPage) {
-                  const key = `internal_${targetPage}`;
+                  const key = `int_${targetPage}`;
                   let cleanText = await getLinkTextInRect(page, annot.rect);
-                  const existing = targetMap.get(key);
 
-                  if (!existing) {
+                  if (!targetMap.has(key)) {
                     targetMap.set(key, {
                       title: (cleanText && cleanText.length > 0) ? cleanText : `หน้า ${targetPage}`,
                       target: targetPage,
                       type: 'internal',
-                      icon: 'fa-bookmark',
-                      priority: 1
+                      icon: 'fa-bookmark'
                     });
-                  } else if (existing.priority === 1) {
-                    // เลือกข้อความภาษาไทยที่สมบูรณ์และยาวที่สุด
+                  } else {
+                    const existing = targetMap.get(key);
                     if (cleanText && cleanText.length > existing.title.length && !existing.title.startsWith('หน้า ')) {
                       existing.title = cleanText;
                     }
@@ -369,14 +338,14 @@
               }
             }
           }
-        } catch(e) {}
+        } catch(e) {
+          console.warn(`Error scanning page ${pageNum}:`, e);
+        }
       }
 
       const extractedLinks = Array.from(targetMap.values());
 
-      // 3. จัดเรียงลำดับปุ่ม
-      // - ปุ่มภายใน เรียงตามเลขหน้าเป้าหมาย (1 -> 2 -> 3 ...)
-      // - ปุ่มภายนอก ต่อท้ายตามลำดับหน้าที่พบ
+      // จัดเรียงลำดับปุ่ม: ลิงก์ภายในเรียงตามเลขหน้าเป้าหมาย (1 -> 2 -> 3 ...) แล้วตามด้วยลิงก์ภายนอก
       extractedLinks.sort((a, b) => {
         if (a.type === 'internal' && b.type === 'internal') {
           return a.target - b.target;
@@ -395,6 +364,7 @@
       const desktopNav = document.getElementById('desktopMenuNav');
       const mobileNav = document.getElementById('mobileMenuNav');
 
+      // ถ้าไม่มีลิงก์จริงในไฟล์ ให้ซ่อน Navigation Bar ไปเลย
       if (!links || links.length === 0) {
         headerBar.classList.add('hidden');
         return;
