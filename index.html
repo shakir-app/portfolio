@@ -337,6 +337,7 @@
     }
 
     // สแกนและดึงลิงก์ โดยบังคับว่า "ชื่อเมนูต้องไม่ซ้ำกันเด็ดขาด"
+    // สแกนและดึงลิงก์ โดยกรองตาม "หน้าเป้าหมาย / URL" ไม่ให้เกิดปุ่มซ้ำเด็ดขาด
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
@@ -349,40 +350,32 @@
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               
               if (annot.url) {
-                // External Link
+                // --- ลิงก์ภายนอก (External URL) ---
                 const url = annot.url.trim();
-                let titles = await getLinkTitlesInRect(page, annot.rect);
+                const mapKey = `ext_${url.toLowerCase()}`; // ใช้ URL เป็น Key ในการเช็กซ้ำ
                 
-                if (titles.length === 0) {
-                  let defaultTitle = url;
-                  if (url.startsWith('mailto:')) {
-                    defaultTitle = url.replace('mailto:', '');
-                  } else {
-                    try {
-                      const parsed = new URL(url);
-                      defaultTitle = parsed.hostname.replace('www.', '');
-                    } catch(e) {}
-                  }
-                  titles = [defaultTitle];
-                }
+                let titles = await getLinkTitlesInRect(page, annot.rect);
+                let bestTitle = titles.length > 0 ? titles[0] : url;
 
-                let icon = url.startsWith('mailto:') ? 'fa-envelope' : 'fa-arrow-up-right-from-square';
-
-                for (const title of titles) {
-                  // Key ใช้ชื่อประโยคเพื่อป้องกันเมนูซ้ำ (Unique Title)
-                  const key = title.toLowerCase().trim();
-                  if (key && !targetMap.has(key)) {
-                    targetMap.set(key, {
-                      title: title,
-                      target: url,
-                      type: 'external',
-                      icon: icon,
-                      pageNum: pageNum
-                    });
+                if (!targetMap.has(mapKey)) {
+                  let icon = url.startsWith('mailto:') ? 'fa-envelope' : 'fa-arrow-up-right-from-square';
+                  targetMap.set(mapKey, {
+                    title: bestTitle,
+                    target: url,
+                    type: 'external',
+                    icon: icon,
+                    pageNum: pageNum
+                  });
+                } else {
+                  // ถ้ามี URL นี้แล้ว แต่ข้อความเดิมสั้นหรือเป็น URL เปล่าๆ ให้เอาข้อความใหม่ที่ดีกว่ามาแทน
+                  const existing = targetMap.get(mapKey);
+                  if (bestTitle && bestTitle !== url && existing.title === url) {
+                    existing.title = bestTitle;
                   }
                 }
+
               } else if (annot.dest) {
-                // Internal Link
+                // --- ลิงก์ภายในเอกสาร (Internal Page Jump) ---
                 let targetPage = null;
                 if (typeof annot.dest === 'string') {
                   try {
@@ -396,31 +389,48 @@
                 }
 
                 if (targetPage) {
+                  const mapKey = `int_page_${targetPage}`; // ใช้ "เลขหน้าปลายทาง" เป็น Key ในการเช็กซ้ำ
                   let titles = await getLinkTitlesInRect(page, annot.rect);
-                  if (titles.length === 0) {
-                    titles = [`หน้า ${targetPage}`];
-                  }
+                  let bestTitle = titles.length > 0 ? titles[0] : `หน้า ${targetPage}`;
 
-                  for (const title of titles) {
-                    // Key ใช้ชื่อประโยคในการเช็กซ้ำ 100%
-                    const key = title.toLowerCase().trim();
-                    if (key && !targetMap.has(key)) {
-                      targetMap.set(key, {
-                        title: title,
-                        target: targetPage,
-                        type: 'internal',
-                        icon: 'fa-bookmark'
-                      });
+                  if (!targetMap.has(mapKey)) {
+                    targetMap.set(mapKey, {
+                      title: bestTitle,
+                      target: targetPage,
+                      type: 'internal',
+                      icon: 'fa-bookmark'
+                    });
+                  } else {
+                    // ถ้าเคยเก็บหน้านี้ไว้แล้ว แต่ชื่อเดิมเป็นแค่คำว่า "หน้า X" ให้เปลี่ยนเป็นชื่อหัวข้อจริง
+                    const existing = targetMap.get(mapKey);
+                    if (bestTitle && !bestTitle.startsWith('หน้า ') && existing.title.startsWith('หน้า ')) {
+                      existing.title = bestTitle;
                     }
                   }
                 }
               }
+
             }
           }
         } catch(e) {
           console.warn(`Error scanning page ${pageNum}:`, e);
         }
       }
+
+      const extractedLinks = Array.from(targetMap.values());
+
+      // เรียงลำดับเมนูตามเลขหน้าจากน้อยไปมาก
+      extractedLinks.sort((a, b) => {
+        if (a.type === 'internal' && b.type === 'internal') {
+          return a.target - b.target;
+        }
+        if (a.type === 'internal') return -1;
+        if (b.type === 'internal') return 1;
+        return (a.pageNum || 0) - (b.pageNum || 0);
+      });
+
+      return extractedLinks;
+    }
 
       const extractedLinks = Array.from(targetMap.values());
 
