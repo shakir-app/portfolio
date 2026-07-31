@@ -172,7 +172,12 @@
   <script>
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwg0vi1g8Ke6CvRjd2CoAOoIeCUsgr_h8w4dlMeMexi7ZqrP2wJMDq9VAJeK1_hOpFo/exec";
 
+    // กำหนด Worker URL ของ PDF.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // ตั้งค่า URL CMap และ Standard Font เพื่อรองรับ UTF-8 ภาษาไทย และทุกภาษาทั่วโลก
+    const PDF_CMAP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/';
+    const PDF_STANDARD_FONT_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/';
 
     let adminAuth = JSON.parse(sessionStorage.getItem('adminAuth')) || null;
 
@@ -216,7 +221,7 @@
       }
     }
 
-    // ฟังก์ชันช่วยรวมตัวอักษรและสระภาษาไทยที่หลุดเว้นวรรค
+    // ฟังก์ชันช่วยรวมสระ/พยัญชนะไทย และปรับโครงสร้าง Unicode (UTF-8 Normalization)
     function fixThaiSpacing(str) {
       if (!str) return '';
       let cleaned = str.trim();
@@ -226,13 +231,12 @@
       return cleaned.replace(/\s+/g, ' ');
     }
 
-    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect ของปุ่มลิงก์ (แก้ไขกรอบพิกัดไม่ให้กินบรรทัดอื่น)
+    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect พร้อมระบบจัดการ UTF-8
     async function getLinkTextInRect(page, rect) {
       try {
         if (!rect || rect.length < 4) return '';
         const textContent = await page.getTextContent();
         
-        // กำหนดพิกัดค้นหาให้แม่นยำตรงกับปุ่มจริง (ไม่ขยายขอบเขตขึ้นบรรทัดใหม่)
         const lX1 = Math.min(rect[0], rect[2]) - 5;
         const lX2 = Math.max(rect[0], rect[2]) + 5;
         const lY1 = Math.min(rect[1], rect[3]) - 3;
@@ -241,13 +245,12 @@
         const matchedItems = textContent.items.filter(item => {
           if (!item.str || !item.str.trim()) return false;
           const x = item.transform[4];
-          const y = item.transform[5]; // Baseline Y ใน PDF
+          const y = item.transform[5];
           return x >= lX1 && x <= lX2 && y >= lY1 && y <= lY2;
         });
 
         if (matchedItems.length === 0) return '';
 
-        // เรียงลำดับตัวอักษรจากบนลงล่าง และจากซ้ายไปขวา
         matchedItems.sort((a, b) => {
           const yDiff = b.transform[5] - a.transform[5];
           if (Math.abs(yDiff) > 3) return yDiff;
@@ -257,7 +260,10 @@
         const rawText = matchedItems.map(i => i.str).join(' ');
         let cleaned = fixThaiSpacing(rawText);
         
-        // ตัดตัวเลขหัวข้อข้างหน้าออก เช่น "01 คำนำ" -> เหลือเฉพาะ "คำนำ"
+        // แปลงรูปแบบอักขระ Unicode ให้อยู่ในมาตรฐาน NFC (สำหรับสระลอย/จม ภาษาไทย)
+        cleaned = cleaned.normalize('NFC');
+
+        // ตัดตัวเลขหัวข้อข้างหน้าออก เช่น "01 คำนำ" -> เหลือ "คำนำ"
         const cleanWithoutNum = cleaned.replace(/^[\d\s.\-•]+/, '').trim();
         if (cleanWithoutNum.length > 0) {
           cleaned = cleanWithoutNum;
@@ -269,7 +275,7 @@
       }
     }
 
-    // ฟังก์ชันสแกนเฉพาะพื้นที่ที่เป็นลิงก์กดได้จริง
+    // ฟังก์ชันสแกนเฉพาะลิงก์จริง และดึงชื่อภาษาต่างๆ อย่างถูกต้อง
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
@@ -282,7 +288,7 @@
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               
               if (annot.url) {
-                // ลิงก์ภายนอก (External Link)
+                // External Link
                 const url = annot.url.trim();
                 const key = `ext_${url}`;
 
@@ -312,7 +318,7 @@
                   });
                 }
               } else if (annot.dest) {
-                // ลิงก์ภายในหน้า (Internal Page Link)
+                // Internal Link
                 let targetPage = null;
                 if (typeof annot.dest === 'string') {
                   try {
@@ -338,7 +344,6 @@
                     });
                   } else {
                     const existing = targetMap.get(key);
-                    // ถ้าก่อนหน้านี้เป็นชื่อหน้า ให้แทนที่ด้วยข้อความจริงที่ดึงได้
                     if (existing.title.startsWith('หน้า ') && cleanText) {
                       existing.title = cleanText;
                     }
@@ -354,7 +359,6 @@
 
       const extractedLinks = Array.from(targetMap.values());
 
-      // จัดเรียงลำดับปุ่มเรียงตามเลขหน้าเป้าหมาย (1 -> 2 -> 3 ...)
       extractedLinks.sort((a, b) => {
         if (a.type === 'internal' && b.type === 'internal') {
           return a.target - b.target;
@@ -367,7 +371,6 @@
       return extractedLinks;
     }
 
-    // ฟังก์ชันสร้างเมนูบน Navigation Bar
     function buildPdfLinksNavbar(links) {
       const headerBar = document.getElementById('viewerHeaderBar');
       const desktopNav = document.getElementById('desktopMenuNav');
@@ -410,7 +413,6 @@
       mobileNav.innerHTML = mobileHtml;
     }
 
-    // Smooth Scroll ไปยังหน้า PDF ที่เลือก
     function scrollToPdfPage(pageNum) {
       const pageCanvas = document.getElementById(`pdf-page-${pageNum}`);
       if (pageCanvas) {
@@ -439,7 +441,13 @@
             pdfArray[i] = pdfData.charCodeAt(i);
           }
 
-          const pdf = await pdfjsLib.getDocument({ data: pdfArray }).promise;
+          // โหลดไฟล์ PDF พร้อมระบุ cMapUrl และ standardFontDataUrl สำหรับ UTF-8
+          const pdf = await pdfjsLib.getDocument({
+            data: pdfArray,
+            cMapUrl: PDF_CMAP_URL,
+            cMapPacked: true,
+            standardFontDataUrl: PDF_STANDARD_FONT_URL
+          }).promise;
           
           const extractedLinks = await extractLinksFromPdf(pdf);
           buildPdfLinksNavbar(extractedLinks);
