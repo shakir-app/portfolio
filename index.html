@@ -19,17 +19,33 @@
   <!-- SweetAlert2 -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
+  <!-- PDF.js สำหรับ Render PDF ให้กลายเป็นหน้าเว็บ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
   <style>
     body {
       font-family: 'Sarabun', sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
     }
   </style>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 m-0 p-0 overflow-x-hidden">
 
-  <!-- Full Screen View Mode Container (แสดงผลเต็มจอเมื่อเปิดดูไฟล์) -->
-  <div id="pdfViewerContainer" class="hidden fixed inset-0 z-50 bg-white w-screen h-screen">
-    <iframe id="pdfFrame" class="w-full h-full border-none m-0 p-0" src=""></iframe>
+  <!-- Website View Mode Container (แสดงผลเป็นหน้าเว็บแบบร้อยต่อกันอย่างต่อเนื่อง) -->
+  <div id="websiteViewerContainer" class="hidden min-h-screen w-full bg-slate-900 flex flex-col items-center justify-start">
+    
+    <!-- Loading Screen -->
+    <div id="loadingView" class="flex flex-col items-center justify-center min-h-screen text-white">
+      <i class="fa-solid fa-circle-notch fa-spin text-4xl text-indigo-400 mb-4"></i>
+      <p class="text-slate-300 font-medium">กำลังโหลดหน้าเว็บไซต์...</p>
+    </div>
+
+    <!-- Canvas Container สำหรับวางหน้าเว็บต่อเนื่อง -->
+    <div id="pagesCanvasContainer" class="w-full max-w-5xl mx-auto shadow-2xl bg-white"></div>
   </div>
 
   <!-- Main App View -->
@@ -98,16 +114,17 @@
   <script>
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwg0vi1g8Ke6CvRjd2CoAOoIeCUsgr_h8w4dlMeMexi7ZqrP2wJMDq9VAJeK1_hOpFo/exec";
 
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
     let adminAuth = JSON.parse(sessionStorage.getItem('adminAuth')) || null;
 
     window.onload = function() {
       updateAdminUI();
       const urlParams = new URLSearchParams(window.location.search);
-      // เช็ค parameter ?file= หรือ ?name= หรือ ?id= (เพื่อความครอบคลุม)
       const fileName = urlParams.get('file') || urlParams.get('name') || urlParams.get('id');
 
       if (fileName) {
-        showPdfViewerByName(fileName);
+        renderWebsiteMode(decodeURIComponent(fileName));
       } else {
         loadFilesList();
       }
@@ -237,41 +254,62 @@
       loadFilesList();
     }
 
-    // ฟังก์ชันค้นหาและแสดงผลไฟล์ PDF จากชื่อไฟล์
-    async function showPdfViewerByName(fileName) {
+    // แปลงไฟล์ PDF ให้แสดงผลเป็นหน้าเว็บไซต์จริง (Web-page Canvas)
+    async function renderWebsiteMode(fileName) {
       document.getElementById('mainContainer').classList.add('hidden');
-      const pdfContainer = document.getElementById('pdfViewerContainer');
-      const iframe = document.getElementById('pdfFrame');
-      
-      pdfContainer.classList.remove('hidden');
+      const webContainer = document.getElementById('websiteViewerContainer');
+      const loadingView = document.getElementById('loadingView');
+      const pagesContainer = document.getElementById('pagesCanvasContainer');
+
+      webContainer.classList.remove('hidden');
 
       try {
-        const response = await fetch(`${GAS_WEB_APP_URL}?action=getFiles`);
+        const response = await fetch(`${GAS_WEB_APP_URL}?action=getFile&name=${encodeURIComponent(fileName)}`);
         const result = await response.json();
 
-        if (result.status === 'success' && result.data.length > 0) {
-          const targetName = decodeURIComponent(fileName);
-          const foundFile = result.data.find(f => f.name === targetName || f.name === fileName);
+        if (result.status === 'success' && result.base64) {
+          const pdfData = atob(result.base64);
+          const pdfArray = new Uint8Array(pdfData.length);
+          for (let i = 0; i < pdfData.length; i++) {
+            pdfArray[i] = pdfData.charCodeAt(i);
+          }
 
-          if (foundFile) {
-            iframe.src = `https://drive.google.com/file/d/${foundFile.id}/preview`;
-          } else {
-            showErrorScreen(`ไม่พบไฟล์ชื่อ "${targetName}" ในระบบ`);
+          const pdf = await pdfjsLib.getDocument({ data: pdfArray }).promise;
+          
+          loadingView.classList.add('hidden');
+          pagesContainer.innerHTML = '';
+
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            
+            const viewport = page.getViewport({ scale: 2 }); // ความคมชัดสูง (High DPI)
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            pagesContainer.appendChild(canvas);
+
+            await page.render({
+              canvasContext: context,
+              viewport: viewport
+            }).promise;
           }
         } else {
-          showErrorScreen('ไม่พบข้อมูลไฟล์ในระบบ');
+          showErrorScreen(result.message || 'ไม่พบไฟล์ในระบบ');
         }
       } catch (err) {
-        showErrorScreen('เกิดข้อผิดพลาดในการดึงข้อมูลไฟล์');
+        showErrorScreen('เกิดข้อผิดพลาดในการดึงข้อมูลผลงาน');
       }
     }
 
     function showErrorScreen(message) {
       document.body.innerHTML = `
-        <div class="flex items-center justify-center min-h-screen bg-slate-100 p-4">
-          <div class="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-sm border border-slate-200">
+        <div class="flex items-center justify-center min-h-screen bg-slate-900 p-4">
+          <div class="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-lg">
             <i class="fa-solid fa-triangle-exclamation text-rose-500 text-5xl mb-4"></i>
-            <h2 class="text-xl font-bold text-slate-800 mb-2">ไม่สามารถแสดงผลได้</h2>
+            <h2 class="text-xl font-bold text-slate-800 mb-2">ไม่สามารถแสดงผลเว็บไซต์ได้</h2>
             <p class="text-slate-500 text-sm mb-6">${message}</p>
             <button onclick="window.location.href = window.location.pathname" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition">
               ไปยังหน้าหลัก
@@ -340,7 +378,6 @@
       }
     }
 
-    // ฟังก์ชันเปิดไฟล์ในแท็บใหม่ด้วยชื่อไฟล์
     function openFileUrl(encodedFileName) {
       const fileUrl = `${window.location.origin}${window.location.pathname}?file=${encodedFileName}`;
       window.open(fileUrl, '_blank');
@@ -377,7 +414,7 @@
               action: 'deleteFile',
               fileId: fileId,
               username: adminAuth.username,
-              password: adminAuth.password
+              password: password: adminAuth.password
             })
           });
 
