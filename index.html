@@ -48,10 +48,10 @@
 </head>
 <body class="min-h-screen text-slate-700 m-0 p-0 overflow-x-hidden selection:bg-pink-200 selection:text-pink-900">
 
-  <!-- Website View Mode Container (แสดงผลหน้า PDF แบบพรีเซนต์) -->
+  <!-- Website View Mode Container -->
   <div id="websiteViewerContainer" class="hidden min-h-screen w-full bg-slate-900/95 backdrop-blur-md flex flex-col items-center justify-start">
     
-    <!-- Header Navigation Bar สร้างเมนูจากลิงก์ใน PDF (จะถูกซ่อนไว้โดยอัตโนมัติหากสแกนไม่พบลิงก์) -->
+    <!-- Header Navigation Bar -->
     <div id="viewerHeaderBar" class="hidden w-full bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-50">
       <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
         
@@ -63,7 +63,7 @@
           <span id="pdfDocumentTitle">Navigation Menu</span>
         </div>
 
-        <!-- Desktop Navigation Items (ดึงจากลิงก์ใน PDF) -->
+        <!-- Desktop Navigation Items -->
         <nav id="desktopMenuNav" class="hidden md:flex items-center gap-2 overflow-x-auto py-1 max-w-2xl">
           <!-- Dynamic Links -->
         </nav>
@@ -83,10 +83,10 @@
     <!-- Loading Screen -->
     <div id="loadingView" class="flex flex-col items-center justify-center my-20 text-white">
       <div class="w-12 h-12 rounded-full border-4 border-pink-400 border-t-transparent animate-spin mb-4"></div>
-      <p class="text-slate-300 font-heading font-medium text-sm">กำลังโหลดและสแกนโครงสร้างเอกสาร...</p>
+      <p class="text-slate-300 font-heading font-medium text-sm">กำลังสแกนโครงสร้างเอกสารและเรียงลำดับเมนู...</p>
     </div>
 
-    <!-- Canvas Container สำหรับวางหน้า PDF ต่อเนื่อง -->
+    <!-- Canvas Container สำหรับวางหน้า PDF -->
     <div id="pagesCanvasContainer" class="w-full max-w-4xl mx-auto my-6 shadow-2xl rounded-2xl overflow-hidden bg-white"></div>
   </div>
 
@@ -125,7 +125,6 @@
         
         <div class="w-full sm:w-auto">
           <input type="file" id="fileInput" accept="application/pdf" class="hidden" onchange="handleFileSelect(event)">
-          <!-- ปุ่มอัปโหลดใช้สีเกรเดี้ยนเดียวกับคำว่า Storage (from-pink-500 to-purple-600) -->
           <button onclick="document.getElementById('fileInput').click()" class="w-full sm:w-auto bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white px-7 py-3.5 rounded-2xl shadow-lg shadow-pink-500/25 hover:shadow-pink-500/35 transition-all duration-200 font-heading font-medium text-sm flex items-center justify-center gap-2 transform active:scale-95">
             <i class="fa-solid fa-cloud-arrow-up text-base"></i>
             อัปโหลด Portfolio (.pdf)
@@ -217,124 +216,83 @@
       }
     }
 
-    async function openAdminLoginModal() {
-      const { value: formValues } = await Swal.fire({
-        title: '<span class="font-heading text-lg text-slate-800">เข้าสู่ระบบแอดมิน</span>',
-        html: `
-          <div class="text-left mt-3 space-y-3 font-sans">
-            <div>
-              <label class="block text-xs font-semibold text-slate-500 mb-1">Username</label>
-              <input id="swal-input-user" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-pink-400 text-sm" placeholder="ระบุ Username">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-500 mb-1">Password</label>
-              <input id="swal-input-pass" type="password" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-pink-400 text-sm" placeholder="ระบุ Password">
-            </div>
-          </div>
-        `,
-        focusConfirm: false,
-        showCancelButton: true,
-        confirmButtonText: 'เข้าสู่ระบบ',
-        cancelButtonText: 'ยกเลิก',
-        confirmButtonColor: '#EC4899',
-        customClass: { popup: 'rounded-3xl' },
-        preConfirm: () => {
-          const username = document.getElementById('swal-input-user').value;
-          const password = document.getElementById('swal-input-pass').value;
-          if (!username || !password) {
-            Swal.showValidationMessage('กรุณากรอกข้อมูลให้ครบถ้วน');
-            return false;
-          }
-          return { username, password };
-        }
-      });
+    // ฟังก์ชันดึงข้อความจากตำแหน่งกรอบลิงก์บน PDF
+    async function getLinkTextInRect(page, rect) {
+      try {
+        if (!rect || rect.length < 4) return '';
+        const textContent = await page.getTextContent();
+        
+        // ขยายพื้นที่การค้นหาข้อความทางขวาเพื่อเก็บข้อความต่อท้าย
+        const minX = Math.min(rect[0], rect[2]) - 10;
+        const maxX = Math.max(rect[0], rect[2]) + 180;
+        const minY = Math.min(rect[1], rect[3]) - 10;
+        const maxY = Math.max(rect[1], rect[3]) + 10;
 
-      if (formValues) {
-        Swal.fire({
-          title: 'กำลังตรวจสอบ...',
-          allowOutsideClick: false,
-          customClass: { popup: 'rounded-3xl' },
-          didOpen: () => Swal.showLoading()
+        const matchedItems = textContent.items.filter(item => {
+          if (!item.str || !item.str.trim()) return false;
+          const x = item.transform[4];
+          const y = item.transform[5];
+          return x >= minX && x <= maxX && y >= minY && y <= maxY;
         });
 
-        try {
-          const response = await fetch(GAS_WEB_APP_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: 'loginAdmin',
-              username: formValues.username,
-              password: formValues.password
-            })
-          });
-
-          const result = await response.json();
-
-          if (result.status === 'success') {
-            adminAuth = { username: formValues.username, password: formValues.password };
-            sessionStorage.setItem('adminAuth', JSON.stringify(adminAuth));
-            updateAdminUI();
-            
-            Swal.fire({
-              icon: 'success',
-              title: 'เข้าสู่ระบบสำเร็จ',
-              text: 'ยินดีต้อนรับเข้าสู่ระบบจัดการแอดมิน',
-              timer: 1500,
-              showConfirmButton: false,
-              customClass: { popup: 'rounded-3xl' }
-            });
-
-            loadFilesList();
-          } else {
-            Swal.fire({
-              icon: 'error',
-              title: 'เข้าสู่ระบบไม่สำเร็จ',
-              text: result.message,
-              customClass: { popup: 'rounded-3xl' }
-            });
-          }
-        } catch (err) {
-          Swal.fire({
-            icon: 'error',
-            title: 'เกิดข้อผิดพลาด',
-            text: 'ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้',
-            customClass: { popup: 'rounded-3xl' }
-          });
-        }
+        // เรียงจากซ้ายไปขวา
+        matchedItems.sort((a, b) => a.transform[4] - b.transform[4]);
+        const textStr = matchedItems.map(i => i.str.trim()).join(' ').trim();
+        return textStr;
+      } catch (e) {
+        return '';
       }
     }
 
-    function logoutAdmin() {
-      adminAuth = null;
-      sessionStorage.removeItem('adminAuth');
-      updateAdminUI();
-      Swal.fire({
-        icon: 'info',
-        title: 'ออกจากระบบแล้ว',
-        timer: 1500,
-        showConfirmButton: false,
-        customClass: { popup: 'rounded-3xl' }
-      });
-      loadFilesList();
-    }
-
-    // ฟังก์ชันสแกนหาลิงก์ทั้งหมดที่อยู่ในไฟล์ PDF นั้นๆ
+    // สแกนหาลิงก์ใน PDF + ดึงชื่อเมนู + จัดเรียงลำดับหน้า
     async function extractLinksFromPdf(pdf) {
       const extractedLinks = [];
       const seenKeys = new Set();
 
+      // 1. ลองดึงจาก Outline (Bookmarks) ของไฟล์ PDF ก่อน
+      try {
+        const outline = await pdf.getOutline();
+        if (outline && outline.length > 0) {
+          for (const item of outline) {
+            let targetPage = null;
+            if (typeof item.dest === 'string') {
+              const destArray = await pdf.getDestination(item.dest);
+              if (destArray) {
+                const pageIdx = await pdf.getPageIndex(destArray[0]);
+                targetPage = pageIdx + 1;
+              }
+            } else if (Array.isArray(item.dest)) {
+              const pageIdx = await pdf.getPageIndex(item.dest[0]);
+              targetPage = pageIdx + 1;
+            }
+
+            if (targetPage && item.title) {
+              const key = `page_${targetPage}_${item.title}`;
+              if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                extractedLinks.push({
+                  title: item.title,
+                  target: targetPage,
+                  type: 'internal',
+                  icon: 'fa-bookmark'
+                });
+              }
+            }
+          }
+        }
+      } catch(e) {}
+
+      // 2. สแกนจาก Link Annotations บนทุกหน้าของ PDF
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
           const annotations = await page.getAnnotations();
 
           for (const annot of annotations) {
-            // เช็คว่าชนิด Annotation เป็น Link หรือไม่
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               let item = null;
 
               if (annot.url) {
-                // External Link, Mailto หรือ File Link
                 const url = annot.url;
                 let title = url;
                 let icon = 'fa-globe';
@@ -347,19 +305,16 @@
                     const parsed = new URL(url);
                     title = parsed.hostname.replace('www.', '') + (parsed.pathname !== '/' ? parsed.pathname : '');
                     if (title.length > 20) title = title.substring(0, 18) + '...';
-                  } catch(e) {
-                    title = url;
-                  }
+                  } catch(e) { title = url; }
                   icon = 'fa-arrow-up-right-from-square';
                 }
 
                 const key = `ext_${url}`;
                 if (!seenKeys.has(key)) {
                   seenKeys.add(key);
-                  item = { title, target: url, type: 'external', icon };
+                  item = { title, target: url, type: 'external', icon, pageNum };
                 }
               } else if (annot.dest) {
-                // Internal Page Link (ลิงก์เปลี่ยนหน้าในไฟล์ PDF)
                 let targetPage = null;
                 if (typeof annot.dest === 'string') {
                   try {
@@ -377,14 +332,21 @@
                 }
 
                 if (targetPage) {
-                  const key = `int_page_${targetPage}`;
+                  // ดึงข้อความจากกรอบลิงก์เพื่อนำมาทำชื่อเมนู
+                  let linkText = await getLinkTextInRect(page, annot.rect);
+                  if (!linkText || linkText.length < 2) {
+                    linkText = `หน้า ${targetPage}`;
+                  }
+
+                  const key = `int_${targetPage}_${linkText}`;
                   if (!seenKeys.has(key)) {
                     seenKeys.add(key);
                     item = { 
-                      title: `หน้า ${targetPage}`, 
+                      title: linkText, 
                       target: targetPage, 
                       type: 'internal', 
-                      icon: 'fa-bookmark' 
+                      icon: 'fa-bookmark',
+                      pageNum
                     };
                   }
                 }
@@ -394,47 +356,55 @@
             }
           }
         } catch(e) {
-          console.warn(`Error extracting annotations on page ${pageNum}:`, e);
+          console.warn(`Error on page ${pageNum}:`, e);
         }
       }
+
+      // 3. จัดเรียงลำดับเมนูตามลำดับหน้า (Target Page Number) จากน้อยไปมาก
+      extractedLinks.sort((a, b) => {
+        if (a.type === 'internal' && b.type === 'internal') {
+          return a.target - b.target; // เรียง 1, 2, 3, 4, 5...
+        }
+        if (a.type === 'internal') return -1;
+        if (b.type === 'internal') return 1;
+        return 0;
+      });
 
       return extractedLinks;
     }
 
-    // ฟังก์ชันสร้างเมนูบน Navigation Bar จากรายการลิงก์ที่สแกนได้
     function buildPdfLinksNavbar(links) {
       const headerBar = document.getElementById('viewerHeaderBar');
       const desktopNav = document.getElementById('desktopMenuNav');
       const mobileNav = document.getElementById('mobileMenuNav');
 
       if (!links || links.length === 0) {
-        // หากไม่มีลิงก์ ให้ซ่อนเมนูบาร์นี้ไปเลยตามโจทย์
         headerBar.classList.add('hidden');
         return;
       }
 
       headerBar.classList.remove('hidden');
 
-      const desktopHtml = links.map((link, idx) => {
+      const desktopHtml = links.map(link => {
         const actionScript = link.type === 'external' 
           ? `window.open('${link.target}', '_blank')` 
           : `scrollToPdfPage(${link.target})`;
 
         return `
-          <button onclick="${actionScript}" class="px-3 py-1.5 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-1.5 whitespace-nowrap border border-slate-700/40">
+          <button onclick="${actionScript}" class="px-3.5 py-1.5 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-1.5 whitespace-nowrap border border-slate-700/40 shadow-sm">
             <i class="fa-solid ${link.icon} text-pink-400 text-[11px]"></i>
             <span>${link.title}</span>
           </button>
         `;
       }).join('');
 
-      const mobileHtml = links.map((link, idx) => {
+      const mobileHtml = links.map(link => {
         const actionScript = link.type === 'external' 
           ? `window.open('${link.target}', '_blank'); toggleMobileMenu();` 
           : `scrollToPdfPage(${link.target}); toggleMobileMenu();`;
 
         return `
-          <button onclick="${actionScript}" class="w-full text-left px-3 py-2 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-2">
+          <button onclick="${actionScript}" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-2 border-b border-slate-800/50">
             <i class="fa-solid ${link.icon} text-pink-400 text-[11px]"></i>
             <span>${link.title}</span>
           </button>
@@ -445,7 +415,6 @@
       mobileNav.innerHTML = mobileHtml;
     }
 
-    // ฟังก์ชัน Smooth Scroll วิ่งไปยังหน้า PDF ตามต้องการ
     function scrollToPdfPage(pageNum) {
       const pageCanvas = document.getElementById(`pdf-page-${pageNum}`);
       if (pageCanvas) {
@@ -476,14 +445,13 @@
 
           const pdf = await pdfjsLib.getDocument({ data: pdfArray }).promise;
           
-          // สแกนลิงก์ภายในไฟล์ PDF เพื่อสร้างเมนูบาร์
+          // สแกนดึงข้อความลิงก์และจัดเรียงเมนูบาร์ตามลำดับหน้า
           const extractedLinks = await extractLinksFromPdf(pdf);
           buildPdfLinksNavbar(extractedLinks);
 
           loadingView.classList.add('hidden');
           pagesContainer.innerHTML = '';
 
-          // แสดงผลหน้า PDF ต่อเนื่อง
           for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
             const page = await pdf.getPage(pageNum);
             
@@ -607,6 +575,106 @@
     function openFileUrl(encodedFileName) {
       const fileUrl = `${window.location.origin}${window.location.pathname}?file=${encodedFileName}`;
       window.open(fileUrl, '_blank');
+    }
+
+    async function openAdminLoginModal() {
+      const { value: formValues } = await Swal.fire({
+        title: '<span class="font-heading text-lg text-slate-800">เข้าสู่ระบบแอดมิน</span>',
+        html: `
+          <div class="text-left mt-3 space-y-3 font-sans">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1">Username</label>
+              <input id="swal-input-user" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-pink-400 text-sm" placeholder="ระบุ Username">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1">Password</label>
+              <input id="swal-input-pass" type="password" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-pink-400 text-sm" placeholder="ระบุ Password">
+            </div>
+          </div>
+        `,
+        focusConfirm: false,
+        showCancelButton: true,
+        confirmButtonText: 'เข้าสู่ระบบ',
+        cancelButtonText: 'ยกเลิก',
+        confirmButtonColor: '#EC4899',
+        customClass: { popup: 'rounded-3xl' },
+        preConfirm: () => {
+          const username = document.getElementById('swal-input-user').value;
+          const password = document.getElementById('swal-input-pass').value;
+          if (!username || !password) {
+            Swal.showValidationMessage('กรุณากรอกข้อมูลให้ครบถ้วน');
+            return false;
+          }
+          return { username, password };
+        }
+      });
+
+      if (formValues) {
+        Swal.fire({
+          title: 'กำลังตรวจสอบ...',
+          allowOutsideClick: false,
+          customClass: { popup: 'rounded-3xl' },
+          didOpen: () => Swal.showLoading()
+        });
+
+        try {
+          const response = await fetch(GAS_WEB_APP_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'loginAdmin',
+              username: formValues.username,
+              password: formValues.password
+            })
+          });
+
+          const result = await response.json();
+
+          if (result.status === 'success') {
+            adminAuth = { username: formValues.username, password: formValues.password };
+            sessionStorage.setItem('adminAuth', JSON.stringify(adminAuth));
+            updateAdminUI();
+            
+            Swal.fire({
+              icon: 'success',
+              title: 'เข้าสู่ระบบสำเร็จ',
+              timer: 1500,
+              showConfirmButton: false,
+              customClass: { popup: 'rounded-3xl' }
+            });
+
+            loadFilesList();
+          } else {
+            Swal.fire({
+              icon: 'error',
+              title: 'เข้าสู่ระบบไม่สำเร็จ',
+              text: result.message,
+              customClass: { popup: 'rounded-3xl' }
+            });
+          }
+        } catch (err) {
+          Swal.fire({
+            icon: 'error',
+            title: 'เกิดข้อผิดพลาด',
+            text: 'ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้',
+            customClass: { popup: 'rounded-3xl' }
+          });
+        }
+      }
+    }
+
+    function logoutAdmin() {
+      adminAuth = null;
+      sessionStorage.removeItem('adminAuth');
+      updateAdminUI();
+      Swal.fire({
+        icon: 'info',
+        title: 'ออกจากระบบแล้ว',
+        timer: 1500,
+        showConfirmButton: false,
+        customClass: { popup: 'rounded-3xl' }
+      });
+      loadFilesList();
     }
 
     async function deleteFile(fileId, fileName) {
