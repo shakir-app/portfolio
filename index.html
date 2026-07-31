@@ -44,7 +44,6 @@
     html {
       scroll-behavior: smooth;
     }
-    /* ซ่อน scrollbar ซ้ำซ้อนให้ดูสะอาดตา */
     .no-scrollbar::-webkit-scrollbar {
       display: none;
     }
@@ -56,7 +55,7 @@
 </head>
 <body class="min-h-screen text-slate-700 m-0 p-0 overflow-x-hidden selection:bg-pink-200 selection:text-pink-900">
 
-  <!-- Website View Mode Container -->
+  <!-- Website View Mode Container (แสดงผลหน้า PDF แบบพรีเซนต์) -->
   <div id="websiteViewerContainer" class="hidden min-h-screen w-full bg-slate-900/95 backdrop-blur-md flex flex-col items-center justify-start">
     
     <!-- Header Navigation Bar -->
@@ -227,13 +226,12 @@
       }
     }
 
-    // --- ระบบทำความสะอาดและแยกชื่อเมนูแบบรัดกุม ---
+    // --- ระบบทำความสะอาดภาษาไทย & ลบช่องว่างล่องหน ---
 
     function containsThai(str) {
       return /[\u0E00-\u0E7F]/.test(str);
     }
 
-    // ลบอักขระล่องหน (Zero-Width Spaces, Non-Breaking Spaces) และจัดช่องว่าง
     function cleanInvisibleChars(str) {
       if (!str) return '';
       return str
@@ -336,8 +334,7 @@
       }
     }
 
-    // สแกนและดึงลิงก์ โดยบังคับว่า "ชื่อเมนูต้องไม่ซ้ำกันเด็ดขาด"
-    // สแกนและดึงลิงก์ โดยกรองตาม "หน้าเป้าหมาย / URL" ไม่ให้เกิดปุ่มซ้ำเด็ดขาด
+    // สแกนและดึงลิงก์ โดยกรองตาม "หน้าเป้าหมาย / URL" ป้องกันการสร้างปุ่มซ้ำเด็ดขาด 100%
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
@@ -352,7 +349,7 @@
               if (annot.url) {
                 // --- ลิงก์ภายนอก (External URL) ---
                 const url = annot.url.trim();
-                const mapKey = `ext_${url.toLowerCase()}`; // ใช้ URL เป็น Key ในการเช็กซ้ำ
+                const mapKey = `ext_${url.toLowerCase()}`;
                 
                 let titles = await getLinkTitlesInRect(page, annot.rect);
                 let bestTitle = titles.length > 0 ? titles[0] : url;
@@ -367,7 +364,6 @@
                     pageNum: pageNum
                   });
                 } else {
-                  // ถ้ามี URL นี้แล้ว แต่ข้อความเดิมสั้นหรือเป็น URL เปล่าๆ ให้เอาข้อความใหม่ที่ดีกว่ามาแทน
                   const existing = targetMap.get(mapKey);
                   if (bestTitle && bestTitle !== url && existing.title === url) {
                     existing.title = bestTitle;
@@ -389,7 +385,7 @@
                 }
 
                 if (targetPage) {
-                  const mapKey = `int_page_${targetPage}`; // ใช้ "เลขหน้าปลายทาง" เป็น Key ในการเช็กซ้ำ
+                  const mapKey = `int_page_${targetPage}`; // 1 หน้าเป้าหมาย = 1 เมนู
                   let titles = await getLinkTitlesInRect(page, annot.rect);
                   let bestTitle = titles.length > 0 ? titles[0] : `หน้า ${targetPage}`;
 
@@ -401,8 +397,8 @@
                       icon: 'fa-bookmark'
                     });
                   } else {
-                    // ถ้าเคยเก็บหน้านี้ไว้แล้ว แต่ชื่อเดิมเป็นแค่คำว่า "หน้า X" ให้เปลี่ยนเป็นชื่อหัวข้อจริง
                     const existing = targetMap.get(mapKey);
+                    // หากเจอลิงก์ชุดใหม่ที่มีข้อความจริง ให้ใช้ข้อความจริงแทน
                     if (bestTitle && !bestTitle.startsWith('หน้า ') && existing.title.startsWith('หน้า ')) {
                       existing.title = bestTitle;
                     }
@@ -420,20 +416,6 @@
       const extractedLinks = Array.from(targetMap.values());
 
       // เรียงลำดับเมนูตามเลขหน้าจากน้อยไปมาก
-      extractedLinks.sort((a, b) => {
-        if (a.type === 'internal' && b.type === 'internal') {
-          return a.target - b.target;
-        }
-        if (a.type === 'internal') return -1;
-        if (b.type === 'internal') return 1;
-        return (a.pageNum || 0) - (b.pageNum || 0);
-      });
-
-      return extractedLinks;
-    }
-
-      const extractedLinks = Array.from(targetMap.values());
-
       extractedLinks.sort((a, b) => {
         if (a.type === 'internal' && b.type === 'internal') {
           return a.target - b.target;
