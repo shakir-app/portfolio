@@ -63,7 +63,7 @@
           <span id="pdfDocumentTitle">Navigation Menu</span>
         </div>
 
-        <!-- Desktop Navigation Items (ดึงจากลิงก์ใน PDF) -->
+        <!-- Desktop Navigation Items -->
         <nav id="desktopMenuNav" class="hidden md:flex items-center gap-2 overflow-x-auto py-1 max-w-2xl">
           <!-- Dynamic Links -->
         </nav>
@@ -226,51 +226,59 @@
       return cleaned.replace(/\s+/g, ' ');
     }
 
-    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect ของปุ่มลิงก์
+    // ฟังก์ชันดึง Text บน PDF จากพิกัด Rect ของปุ่มลิงก์ (แก้ไขกรอบพิกัดไม่ให้กินบรรทัดอื่น)
     async function getLinkTextInRect(page, rect) {
       try {
         if (!rect || rect.length < 4) return '';
         const textContent = await page.getTextContent();
         
-        const minX = Math.min(rect[0], rect[2]) - 5;
-        const maxX = Math.max(rect[0], rect[2]) + 150;
-        const minY = Math.min(rect[1], rect[3]) - 8;
-        const maxY = Math.max(rect[1], rect[3]) + 12;
+        // กำหนดพิกัดค้นหาให้แม่นยำตรงกับปุ่มจริง (ไม่ขยายขอบเขตขึ้นบรรทัดใหม่)
+        const lX1 = Math.min(rect[0], rect[2]) - 5;
+        const lX2 = Math.max(rect[0], rect[2]) + 5;
+        const lY1 = Math.min(rect[1], rect[3]) - 3;
+        const lY2 = Math.max(rect[1], rect[3]) + 3;
 
         const matchedItems = textContent.items.filter(item => {
           if (!item.str || !item.str.trim()) return false;
           const x = item.transform[4];
-          const y = item.transform[5];
-          return x >= minX && x <= maxX && y >= minY && y <= maxY;
+          const y = item.transform[5]; // Baseline Y ใน PDF
+          return x >= lX1 && x <= lX2 && y >= lY1 && y <= lY2;
         });
 
         if (matchedItems.length === 0) return '';
 
+        // เรียงลำดับตัวอักษรจากบนลงล่าง และจากซ้ายไปขวา
         matchedItems.sort((a, b) => {
           const yDiff = b.transform[5] - a.transform[5];
-          if (Math.abs(yDiff) > 5) return yDiff;
+          if (Math.abs(yDiff) > 3) return yDiff;
           return a.transform[4] - b.transform[4];
         });
 
         const rawText = matchedItems.map(i => i.str).join(' ');
-        return fixThaiSpacing(rawText);
+        let cleaned = fixThaiSpacing(rawText);
+        
+        // ตัดตัวเลขหัวข้อข้างหน้าออก เช่น "01 คำนำ" -> เหลือเฉพาะ "คำนำ"
+        const cleanWithoutNum = cleaned.replace(/^[\d\s.\-•]+/, '').trim();
+        if (cleanWithoutNum.length > 0) {
+          cleaned = cleanWithoutNum;
+        }
+
+        return cleaned;
       } catch (e) {
         return '';
       }
     }
 
-    // ฟังก์ชันสแกนเฉพาะพื้นที่ที่เป็นลิงก์กดได้จริง (Clickable Link Annotations) เท่านั้น
+    // ฟังก์ชันสแกนเฉพาะพื้นที่ที่เป็นลิงก์กดได้จริง
     async function extractLinksFromPdf(pdf) {
       const targetMap = new Map();
 
-      // สแกนเฉพาะ Link Annotations บนทุกๆ หน้า (ไม่ใช้ Outline/Bookmark แล้ว)
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
           const annotations = await page.getAnnotations();
 
           for (const annot of annotations) {
-            // ต้องเป็น Link Annotation ที่ผู้ใช้ฝังปุ่มกดลงในหน้า PDF จริงๆ
             if (annot.subtype === 'Link' || annot.annotationType === 2) {
               
               if (annot.url) {
@@ -330,7 +338,8 @@
                     });
                   } else {
                     const existing = targetMap.get(key);
-                    if (cleanText && cleanText.length > existing.title.length && !existing.title.startsWith('หน้า ')) {
+                    // ถ้าก่อนหน้านี้เป็นชื่อหน้า ให้แทนที่ด้วยข้อความจริงที่ดึงได้
+                    if (existing.title.startsWith('หน้า ') && cleanText) {
                       existing.title = cleanText;
                     }
                   }
@@ -345,7 +354,7 @@
 
       const extractedLinks = Array.from(targetMap.values());
 
-      // จัดเรียงลำดับปุ่ม: ลิงก์ภายในเรียงตามเลขหน้าเป้าหมาย (1 -> 2 -> 3 ...) แล้วตามด้วยลิงก์ภายนอก
+      // จัดเรียงลำดับปุ่มเรียงตามเลขหน้าเป้าหมาย (1 -> 2 -> 3 ...)
       extractedLinks.sort((a, b) => {
         if (a.type === 'internal' && b.type === 'internal') {
           return a.target - b.target;
@@ -364,7 +373,6 @@
       const desktopNav = document.getElementById('desktopMenuNav');
       const mobileNav = document.getElementById('mobileMenuNav');
 
-      // ถ้าไม่มีลิงก์จริงในไฟล์ ให้ซ่อน Navigation Bar ไปเลย
       if (!links || links.length === 0) {
         headerBar.classList.add('hidden');
         return;
