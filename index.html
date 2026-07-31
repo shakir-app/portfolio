@@ -41,28 +41,52 @@
       width: 100%;
       height: auto;
     }
+    html {
+      scroll-behavior: smooth;
+    }
   </style>
 </head>
 <body class="min-h-screen text-slate-700 m-0 p-0 overflow-x-hidden selection:bg-pink-200 selection:text-pink-900">
 
-  <!-- Website View Mode Container (แสดงผลเป็นหน้าเว็บแบบเต็ม) -->
+  <!-- Website View Mode Container (แสดงผลหน้า PDF แบบพรีเซนต์) -->
   <div id="websiteViewerContainer" class="hidden min-h-screen w-full bg-slate-900/95 backdrop-blur-md flex flex-col items-center justify-start">
     
-    <!-- Header Bar สำหรับโหมดดูไฟล์ -->
-    <div class="w-full bg-slate-900/80 backdrop-blur border-b border-slate-800 p-4 sticky top-0 z-50 flex justify-between items-center px-6">
-      <button onclick="window.location.href = window.location.pathname" class="text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl text-xs font-medium transition flex items-center gap-2">
-        <i class="fa-solid fa-arrow-left"></i> กลับหน้าหลัก
-      </button>
-      <span class="text-xs text-slate-400 font-heading">✨ Portfolio Showcase Mode</span>
+    <!-- Header Navigation Bar สร้างเมนูจากลิงก์ใน PDF (จะถูกซ่อนไว้โดยอัตโนมัติหากสแกนไม่พบลิงก์) -->
+    <div id="viewerHeaderBar" class="hidden w-full bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-50">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+        
+        <!-- Logo / Title -->
+        <div class="flex items-center gap-2.5 text-white font-heading text-sm font-semibold">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center text-xs shadow-md shadow-pink-500/20">
+            <i class="fa-solid fa-compass text-white"></i>
+          </div>
+          <span id="pdfDocumentTitle">Navigation Menu</span>
+        </div>
+
+        <!-- Desktop Navigation Items (ดึงจากลิงก์ใน PDF) -->
+        <nav id="desktopMenuNav" class="hidden md:flex items-center gap-2 overflow-x-auto py-1 max-w-2xl">
+          <!-- Dynamic Links -->
+        </nav>
+
+        <!-- Mobile Hamburger Button -->
+        <button id="mobileMenuBtn" onclick="toggleMobileMenu()" class="md:hidden text-slate-300 hover:text-white p-2 rounded-xl bg-slate-800/80 border border-slate-700/50 transition">
+          <i class="fa-solid fa-bars text-base"></i>
+        </button>
+      </div>
+
+      <!-- Mobile Dropdown Navigation Menu -->
+      <div id="mobileMenuNav" class="hidden md:hidden bg-slate-900/95 border-b border-slate-800 px-4 py-3 space-y-1">
+        <!-- Dynamic Mobile Links -->
+      </div>
     </div>
 
     <!-- Loading Screen -->
     <div id="loadingView" class="flex flex-col items-center justify-center my-20 text-white">
       <div class="w-12 h-12 rounded-full border-4 border-pink-400 border-t-transparent animate-spin mb-4"></div>
-      <p class="text-slate-300 font-heading font-medium text-sm">กำลังเปิดชมผลงาน...</p>
+      <p class="text-slate-300 font-heading font-medium text-sm">กำลังโหลดและสแกนโครงสร้างเอกสาร...</p>
     </div>
 
-    <!-- Canvas Container สำหรับวางหน้าเว็บต่อเนื่อง -->
+    <!-- Canvas Container สำหรับวางหน้า PDF ต่อเนื่อง -->
     <div id="pagesCanvasContainer" class="w-full max-w-4xl mx-auto my-6 shadow-2xl rounded-2xl overflow-hidden bg-white"></div>
   </div>
 
@@ -88,7 +112,7 @@
     <div class="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/80 shadow-xl shadow-purple-900/5 p-6 sm:p-8 mb-8">
       <div class="flex flex-col sm:flex-row justify-between items-center gap-6">
         <div class="flex items-center gap-4 text-center sm:text-left">
-          <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-400 via-rose-400 to-indigo-400 text-white flex items-center justify-center shadow-lg shadow-pink-500/20 shrink-0">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-pink-500/25 shrink-0">
             <i class="fa-solid fa-folder-heart text-2xl"></i>
           </div>
           <div>
@@ -101,7 +125,8 @@
         
         <div class="w-full sm:w-auto">
           <input type="file" id="fileInput" accept="application/pdf" class="hidden" onchange="handleFileSelect(event)">
-          <button onclick="document.getElementById('fileInput').click()" class="w-full sm:w-auto bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 hover:from-pink-600 hover:via-purple-600 hover:to-indigo-600 text-white px-7 py-3.5 rounded-2xl shadow-lg shadow-pink-500/20 hover:shadow-pink-500/30 transition-all duration-200 font-heading font-medium text-sm flex items-center justify-center gap-2 transform active:scale-95">
+          <!-- ปุ่มอัปโหลดใช้สีเกรเดี้ยนเดียวกับคำว่า Storage (from-pink-500 to-purple-600) -->
+          <button onclick="document.getElementById('fileInput').click()" class="w-full sm:w-auto bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white px-7 py-3.5 rounded-2xl shadow-lg shadow-pink-500/25 hover:shadow-pink-500/35 transition-all duration-200 font-heading font-medium text-sm flex items-center justify-center gap-2 transform active:scale-95">
             <i class="fa-solid fa-cloud-arrow-up text-base"></i>
             อัปโหลด Portfolio (.pdf)
           </button>
@@ -136,7 +161,7 @@
                 <div class="inline-block p-4 rounded-full bg-pink-50 text-pink-400 mb-3 animate-pulse">
                   <i class="fa-solid fa-sparkles text-2xl"></i>
                 </div>
-                <p class="font-medium text-slate-500 text-xs">กำลังโหลดข้อมูลผลงานสุดน่ารัก...</p>
+                <p class="font-medium text-slate-500 text-xs">กำลังโหลดข้อมูลผลงาน...</p>
               </td>
             </tr>
           </tbody>
@@ -163,6 +188,11 @@
         loadFilesList();
       }
     };
+
+    function toggleMobileMenu() {
+      const menu = document.getElementById('mobileMenuNav');
+      if (menu) menu.classList.toggle('hidden');
+    }
 
     function updateAdminUI() {
       const adminNav = document.getElementById('adminNav');
@@ -288,13 +318,150 @@
       loadFilesList();
     }
 
+    // ฟังก์ชันสแกนหาลิงก์ทั้งหมดที่อยู่ในไฟล์ PDF นั้นๆ
+    async function extractLinksFromPdf(pdf) {
+      const extractedLinks = [];
+      const seenKeys = new Set();
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        try {
+          const page = await pdf.getPage(pageNum);
+          const annotations = await page.getAnnotations();
+
+          for (const annot of annotations) {
+            // เช็คว่าชนิด Annotation เป็น Link หรือไม่
+            if (annot.subtype === 'Link' || annot.annotationType === 2) {
+              let item = null;
+
+              if (annot.url) {
+                // External Link, Mailto หรือ File Link
+                const url = annot.url;
+                let title = url;
+                let icon = 'fa-globe';
+
+                if (url.startsWith('mailto:')) {
+                  title = `Email: ${url.replace('mailto:', '')}`;
+                  icon = 'fa-envelope';
+                } else if (url.startsWith('http://') || url.startsWith('https://')) {
+                  try {
+                    const parsed = new URL(url);
+                    title = parsed.hostname.replace('www.', '') + (parsed.pathname !== '/' ? parsed.pathname : '');
+                    if (title.length > 20) title = title.substring(0, 18) + '...';
+                  } catch(e) {
+                    title = url;
+                  }
+                  icon = 'fa-arrow-up-right-from-square';
+                }
+
+                const key = `ext_${url}`;
+                if (!seenKeys.has(key)) {
+                  seenKeys.add(key);
+                  item = { title, target: url, type: 'external', icon };
+                }
+              } else if (annot.dest) {
+                // Internal Page Link (ลิงก์เปลี่ยนหน้าในไฟล์ PDF)
+                let targetPage = null;
+                if (typeof annot.dest === 'string') {
+                  try {
+                    const destArray = await pdf.getDestination(annot.dest);
+                    if (destArray) {
+                      const pageIdx = await pdf.getPageIndex(destArray[0]);
+                      targetPage = pageIdx + 1;
+                    }
+                  } catch(e) {}
+                } else if (Array.isArray(annot.dest)) {
+                  try {
+                    const pageIdx = await pdf.getPageIndex(annot.dest[0]);
+                    targetPage = pageIdx + 1;
+                  } catch(e) {}
+                }
+
+                if (targetPage) {
+                  const key = `int_page_${targetPage}`;
+                  if (!seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    item = { 
+                      title: `หน้า ${targetPage}`, 
+                      target: targetPage, 
+                      type: 'internal', 
+                      icon: 'fa-bookmark' 
+                    };
+                  }
+                }
+              }
+
+              if (item) extractedLinks.push(item);
+            }
+          }
+        } catch(e) {
+          console.warn(`Error extracting annotations on page ${pageNum}:`, e);
+        }
+      }
+
+      return extractedLinks;
+    }
+
+    // ฟังก์ชันสร้างเมนูบน Navigation Bar จากรายการลิงก์ที่สแกนได้
+    function buildPdfLinksNavbar(links) {
+      const headerBar = document.getElementById('viewerHeaderBar');
+      const desktopNav = document.getElementById('desktopMenuNav');
+      const mobileNav = document.getElementById('mobileMenuNav');
+
+      if (!links || links.length === 0) {
+        // หากไม่มีลิงก์ ให้ซ่อนเมนูบาร์นี้ไปเลยตามโจทย์
+        headerBar.classList.add('hidden');
+        return;
+      }
+
+      headerBar.classList.remove('hidden');
+
+      const desktopHtml = links.map((link, idx) => {
+        const actionScript = link.type === 'external' 
+          ? `window.open('${link.target}', '_blank')` 
+          : `scrollToPdfPage(${link.target})`;
+
+        return `
+          <button onclick="${actionScript}" class="px-3 py-1.5 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-1.5 whitespace-nowrap border border-slate-700/40">
+            <i class="fa-solid ${link.icon} text-pink-400 text-[11px]"></i>
+            <span>${link.title}</span>
+          </button>
+        `;
+      }).join('');
+
+      const mobileHtml = links.map((link, idx) => {
+        const actionScript = link.type === 'external' 
+          ? `window.open('${link.target}', '_blank'); toggleMobileMenu();` 
+          : `scrollToPdfPage(${link.target}); toggleMobileMenu();`;
+
+        return `
+          <button onclick="${actionScript}" class="w-full text-left px-3 py-2 rounded-xl text-xs font-heading font-medium text-slate-300 hover:text-white hover:bg-slate-800/90 transition flex items-center gap-2">
+            <i class="fa-solid ${link.icon} text-pink-400 text-[11px]"></i>
+            <span>${link.title}</span>
+          </button>
+        `;
+      }).join('');
+
+      desktopNav.innerHTML = desktopHtml;
+      mobileNav.innerHTML = mobileHtml;
+    }
+
+    // ฟังก์ชัน Smooth Scroll วิ่งไปยังหน้า PDF ตามต้องการ
+    function scrollToPdfPage(pageNum) {
+      const pageCanvas = document.getElementById(`pdf-page-${pageNum}`);
+      if (pageCanvas) {
+        pageCanvas.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
     async function renderWebsiteMode(fileName) {
       document.getElementById('mainContainer').classList.add('hidden');
       const webContainer = document.getElementById('websiteViewerContainer');
       const loadingView = document.getElementById('loadingView');
       const pagesContainer = document.getElementById('pagesCanvasContainer');
+      const docTitle = document.getElementById('pdfDocumentTitle');
 
       webContainer.classList.remove('hidden');
+      docTitle.textContent = fileName;
 
       try {
         const response = await fetch(`${GAS_WEB_APP_URL}?action=getFile&name=${encodeURIComponent(fileName)}`);
@@ -309,14 +476,20 @@
 
           const pdf = await pdfjsLib.getDocument({ data: pdfArray }).promise;
           
+          // สแกนลิงก์ภายในไฟล์ PDF เพื่อสร้างเมนูบาร์
+          const extractedLinks = await extractLinksFromPdf(pdf);
+          buildPdfLinksNavbar(extractedLinks);
+
           loadingView.classList.add('hidden');
           pagesContainer.innerHTML = '';
 
+          // แสดงผลหน้า PDF ต่อเนื่อง
           for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
             const page = await pdf.getPage(pageNum);
             
             const viewport = page.getViewport({ scale: 2 });
             const canvas = document.createElement('canvas');
+            canvas.id = `pdf-page-${pageNum}`;
             const context = canvas.getContext('2d');
             
             canvas.height = viewport.height;
@@ -347,7 +520,7 @@
             <h2 class="text-lg font-bold font-heading text-slate-800 mb-2">ไม่สามารถแสดงผลได้</h2>
             <p class="text-slate-400 text-xs mb-6">${message}</p>
             <button onclick="window.location.href = window.location.pathname" class="bg-pink-500 hover:bg-pink-600 text-white px-6 py-2.5 rounded-2xl font-medium text-xs transition shadow-md shadow-pink-500/20">
-              กลับหน้าหลัก
+              หน้าหลัก
             </button>
           </div>
         </div>
