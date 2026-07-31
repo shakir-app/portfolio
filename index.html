@@ -25,17 +25,11 @@
     }
   </style>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-800">
+<body class="bg-slate-50 min-h-screen text-slate-800 m-0 p-0 overflow-x-hidden">
 
-  <!-- PDF View Mode Container -->
-  <div id="pdfViewerContainer" class="hidden fixed inset-0 bg-slate-900 z-50 flex flex-col">
-    <div class="bg-slate-800 text-white p-4 flex justify-between items-center shadow-md">
-      <h1 class="text-lg font-semibold"><i class="fa-regular fa-file-pdf text-red-400 mr-2"></i>ระบบแสดงผล Portfolio</h1>
-      <button onclick="closeViewer()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg transition text-sm">
-        <i class="fa-solid fa-arrow-left mr-2"></i>กลับหน้าหลัก
-      </button>
-    </div>
-    <iframe id="pdfFrame" class="w-full h-full border-none" src=""></iframe>
+  <!-- Full Screen View Mode Container (แสดงผลเต็มจอเมื่อเปิดดูไฟล์) -->
+  <div id="pdfViewerContainer" class="hidden fixed inset-0 z-50 bg-white w-screen h-screen">
+    <iframe id="pdfFrame" class="w-full h-full border-none m-0 p-0" src=""></iframe>
   </div>
 
   <!-- Main App View -->
@@ -104,16 +98,16 @@
   <script>
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwg0vi1g8Ke6CvRjd2CoAOoIeCUsgr_h8w4dlMeMexi7ZqrP2wJMDq9VAJeK1_hOpFo/exec";
 
-    // ตัวแปรเก็บสถานะ Admin
     let adminAuth = JSON.parse(sessionStorage.getItem('adminAuth')) || null;
 
     window.onload = function() {
       updateAdminUI();
       const urlParams = new URLSearchParams(window.location.search);
-      const fileId = urlParams.get('id');
+      // เช็ค parameter ?file= หรือ ?name= หรือ ?id= (เพื่อความครอบคลุม)
+      const fileName = urlParams.get('file') || urlParams.get('name') || urlParams.get('id');
 
-      if (fileId) {
-        showPdfViewer(fileId);
+      if (fileName) {
+        showPdfViewerByName(fileName);
       } else {
         loadFilesList();
       }
@@ -142,7 +136,6 @@
       }
     }
 
-    // Modal เข้าสู่ระบบแอดมินด้วย SweetAlert2
     async function openAdminLoginModal() {
       const { value: formValues } = await Swal.fire({
         title: 'เข้าสู่ระบบแอดมิน',
@@ -244,23 +237,48 @@
       loadFilesList();
     }
 
-    function showPdfViewer(id) {
+    // ฟังก์ชันค้นหาและแสดงผลไฟล์ PDF จากชื่อไฟล์
+    async function showPdfViewerByName(fileName) {
       document.getElementById('mainContainer').classList.add('hidden');
       const pdfContainer = document.getElementById('pdfViewerContainer');
       const iframe = document.getElementById('pdfFrame');
       
-      iframe.src = `https://drive.google.com/file/d/${id}/preview`;
       pdfContainer.classList.remove('hidden');
+
+      try {
+        const response = await fetch(`${GAS_WEB_APP_URL}?action=getFiles`);
+        const result = await response.json();
+
+        if (result.status === 'success' && result.data.length > 0) {
+          const targetName = decodeURIComponent(fileName);
+          const foundFile = result.data.find(f => f.name === targetName || f.name === fileName);
+
+          if (foundFile) {
+            iframe.src = `https://drive.google.com/file/d/${foundFile.id}/preview`;
+          } else {
+            showErrorScreen(`ไม่พบไฟล์ชื่อ "${targetName}" ในระบบ`);
+          }
+        } else {
+          showErrorScreen('ไม่พบข้อมูลไฟล์ในระบบ');
+        }
+      } catch (err) {
+        showErrorScreen('เกิดข้อผิดพลาดในการดึงข้อมูลไฟล์');
+      }
     }
 
-    function closeViewer() {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('id');
-      window.history.pushState({}, '', url);
-      
-      document.getElementById('pdfViewerContainer').classList.add('hidden');
-      document.getElementById('mainContainer').classList.remove('hidden');
-      loadFilesList();
+    function showErrorScreen(message) {
+      document.body.innerHTML = `
+        <div class="flex items-center justify-center min-h-screen bg-slate-100 p-4">
+          <div class="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-sm border border-slate-200">
+            <i class="fa-solid fa-triangle-exclamation text-rose-500 text-5xl mb-4"></i>
+            <h2 class="text-xl font-bold text-slate-800 mb-2">ไม่สามารถแสดงผลได้</h2>
+            <p class="text-slate-500 text-sm mb-6">${message}</p>
+            <button onclick="window.location.href = window.location.pathname" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition">
+              ไปยังหน้าหลัก
+            </button>
+          </div>
+        </div>
+      `;
     }
 
     async function loadFilesList() {
@@ -279,22 +297,23 @@
 
         if (result.status === 'success' && result.data.length > 0) {
           tbody.innerHTML = result.data.map(file => {
+            const encodedName = encodeURIComponent(file.name);
             const deleteBtnHtml = adminAuth ? `
-              <button onclick="deleteFile('${file.id}', '${file.name}')" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-medium transition ml-1">
+              <button onclick="deleteFile('${file.id}', '${file.name.replace(/'/g, "\\'")}')" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-medium transition ml-1">
                 <i class="fa-solid fa-trash-can mr-1"></i> ลบ
               </button>
             ` : '';
 
             return `
               <tr class="hover:bg-slate-50 transition">
-                <td class="py-4 px-6 font-medium text-indigo-600 hover:text-indigo-800 cursor-pointer" onclick="openFileUrl('${file.id}')">
+                <td class="py-4 px-6 font-medium text-indigo-600 hover:text-indigo-800 cursor-pointer" onclick="openFileUrl('${encodedName}')">
                   <i class="fa-regular fa-file-pdf text-red-500 mr-2 text-base"></i>${file.name}
                 </td>
                 <td class="py-4 px-6 text-slate-500">${file.size}</td>
                 <td class="py-4 px-6 text-slate-500">${file.date}</td>
                 <td class="py-4 px-6 text-center">
-                  <button onclick="openFileUrl('${file.id}')" class="bg-slate-100 hover:bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-medium transition">
-                    <i class="fa-solid fa-eye mr-1"></i> เปิดดู
+                  <button onclick="openFileUrl('${encodedName}')" class="bg-slate-100 hover:bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-medium transition">
+                    <i class="fa-solid fa-arrow-up-right-from-square mr-1"></i> เปิดดู
                   </button>
                   ${deleteBtnHtml}
                 </td>
@@ -321,11 +340,12 @@
       }
     }
 
-    function openFileUrl(id) {
-      window.location.href = `${window.location.origin}${window.location.pathname}?id=${id}`;
+    // ฟังก์ชันเปิดไฟล์ในแท็บใหม่ด้วยชื่อไฟล์
+    function openFileUrl(encodedFileName) {
+      const fileUrl = `${window.location.origin}${window.location.pathname}?file=${encodedFileName}`;
+      window.open(fileUrl, '_blank');
     }
 
-    // ฟังก์ชันลบไฟล์ (เฉพาะแอดมิน)
     async function deleteFile(fileId, fileName) {
       if (!adminAuth) return;
 
